@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Chapter as ChapterType, Novel } from '../types';
 import { ChevronLeft, ChevronRight, Edit, Eye, BookOpen } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { updateReadingProgress } from '../lib/api/reading-progress';
-import { withTimeout, SUPABASE_TIMEOUT } from '../lib/utils';
 import { toast } from 'react-hot-toast';
 
 export default function Chapter() {
@@ -14,7 +13,6 @@ export default function Chapter() {
   const navigate = useNavigate();
   const [chapter, setChapter] = useState<ChapterType | null>(null);
   const [novel, setNovel] = useState<Novel | null>(null);
-  const [hasReachedBottom, setHasReachedBottom] = useState(false);
   const [nextChapter, setNextChapter] = useState<string | null>(null);
   const [prevChapter, setPrevChapter] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -22,47 +20,27 @@ export default function Chapter() {
   const [viewCounted, setViewCounted] = useState(false);
 
   useEffect(() => {
-    const handleScroll = () => {
-      if (!contentRef.current || viewCounted) return;
+    if (!chapterId || viewCounted) return;
 
-      const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
-      const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
-
-      if (scrollPercentage >= 0.8) {
-        setHasReachedBottom(true);
-      }
-    };
-
-    const contentElement = contentRef.current;
-    if (contentElement) {
-      contentElement.addEventListener('scroll', handleScroll);
-    }
-
-    return () => {
-      if (contentElement) {
-        contentElement.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, [viewCounted]);
-
-  useEffect(() => {
-    if (hasReachedBottom && !viewCounted && chapterId) {
-      const incrementViews = async () => {
-        try {
-          await withTimeout(
-            supabase.rpc('increment_chapter_views', { chapter_uuid: chapterId }),
-            SUPABASE_TIMEOUT,
-            'Incrementing chapter views'
-          );
-          setViewCounted(true);
-        } catch (error) {
-          console.error('Error incrementing views:', error);
+    // Set up 2-minute timer for view counting
+    const timer = setTimeout(async () => {
+      try {
+        const { error } = await supabase.rpc('increment_chapter_views', { 
+          chapter_uuid: chapterId 
+        });
+        if (error) {
+          console.error('RPC Error:', error);
+          return;
         }
-      };
+        setViewCounted(true);
+      } catch (error) {
+        console.error('Error incrementing views:', error);
+      }
+    }, 2 * 60 * 1000); // 2 minutes in milliseconds
 
-      incrementViews();
-    }
-  }, [hasReachedBottom, viewCounted, chapterId]);
+    // Cleanup timer on unmount or if chapter changes
+    return () => clearTimeout(timer);
+  }, [chapterId, viewCounted]);
 
   useEffect(() => {
     const fetchChapterData = async () => {
@@ -79,7 +57,7 @@ export default function Chapter() {
           .single();
 
         if (chapterError) throw chapterError;
-        setChapter(chapterData);
+        setChapter(chapterData as unknown as ChapterType);
 
         // Fetch novel
         const { data: novelData, error: novelError } = await supabase
@@ -89,7 +67,7 @@ export default function Chapter() {
           .single();
 
         if (novelError) throw novelError;
-        setNovel(novelData);
+        setNovel(novelData as unknown as Novel);
 
         // Fetch all chapters to determine next/prev
         const { data: chaptersData, error: chaptersError } = await supabase
@@ -102,13 +80,13 @@ export default function Chapter() {
 
         const currentIndex = chaptersData.findIndex(c => c.chapter_id === chapterId);
         if (currentIndex > 0) {
-          setPrevChapter(chaptersData[currentIndex - 1].chapter_id);
+          setPrevChapter(chaptersData[currentIndex - 1].chapter_id as string);
         } else {
           setPrevChapter(null);
         }
 
         if (currentIndex < chaptersData.length - 1) {
-          setNextChapter(chaptersData[currentIndex + 1].chapter_id);
+          setNextChapter(chaptersData[currentIndex + 1].chapter_id as string);
         } else {
           setNextChapter(null);
         }

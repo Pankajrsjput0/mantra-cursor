@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,7 +6,6 @@ import type { Novel, Chapter } from '../types';
 import { BookOpen, Heart, Share2, Eye, Edit } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { addToLibrary, removeFromLibrary } from '../lib/api/library';
-import { withTimeout, SUPABASE_TIMEOUT } from '../lib/utils';
 
 export default function NovelDetail() {
   const { id } = useParams();
@@ -17,10 +16,11 @@ export default function NovelDetail() {
   const [loading, setLoading] = useState(true);
   const [isInLibrary, setIsInLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [viewCounted, setViewCounted] = useState(false);
 
   useEffect(() => {
     const fetchNovel = async () => {
-      if (!id) return;
+      if (!id || viewCounted) return;
 
       try {
         // Fetch novel details
@@ -31,18 +31,18 @@ export default function NovelDetail() {
           .single();
 
         if (novelError) throw novelError;
-        setNovel(novelData);
+        setNovel(novelData as unknown as Novel);
 
-        // Increment view count using RPC function
+        // Increment view count
         try {
-          await withTimeout(
-            supabase.rpc('increment_novel_views', { novel_uuid: id }),
-            SUPABASE_TIMEOUT,
-            'Incrementing novel views'
-          );
+          const { error } = await supabase.rpc('increment_novel_views', { novel_uuid: id });
+          if (error) {
+            console.error('RPC Error:', error);
+            return;
+          }
+          setViewCounted(true);
         } catch (error) {
           console.error('Error incrementing novel views:', error);
-          // Don't throw here, we still want to show the novel
         }
 
         // Fetch chapters
@@ -53,7 +53,7 @@ export default function NovelDetail() {
           .order('chapter_number', { ascending: true });
 
         if (chaptersError) throw chaptersError;
-        setChapters(chaptersData || []);
+        setChapters(chaptersData as unknown as Chapter[] || []);
 
         // Check if novel is in user's library
         if (userProfile) {
@@ -77,7 +77,7 @@ export default function NovelDetail() {
     };
 
     fetchNovel();
-  }, [id, userProfile]);
+  }, [id, userProfile, viewCounted]);
 
   const handleLibraryToggle = async () => {
     if (!userProfile) {

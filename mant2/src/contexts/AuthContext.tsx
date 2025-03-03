@@ -4,6 +4,7 @@ import type { UserProfile } from '../types';
 import { uploadProfilePicture } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 import { withTimeout, TimeoutError, SUPABASE_TIMEOUT } from '../lib/utils';
+import { useNavigate } from 'react-router-dom';
 
 interface AuthContextType {
   user: any;
@@ -30,28 +31,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let mounted = true;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
 
     const initializeAuth = async () => {
       try {
-        const { data: { session } } = await withTimeout(
-          supabase.auth.getSession(),
-          SUPABASE_TIMEOUT,
-          'Authentication initialization'
-        );
-        
-        if (session?.user && mounted) {
-          setUser(session.user);
-          await fetchUserProfile(session.user.id);
+        const session = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        if (session.data.session?.user) {
+          setUser(session.data.session.user);
+          await fetchUserProfile(session.data.session.user.id);
         }
       } catch (error) {
-        console.error('Error initializing auth:', error);
-        if (error instanceof TimeoutError) {
-          toast.error('Authentication initialization timed out. Please refresh the page.');
-        } else {
-          toast.error('Failed to initialize authentication');
+        console.error('Auth initialization error:', error);
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          setTimeout(initializeAuth, 2000 * retryCount); // Exponential backoff
         }
       } finally {
         if (mounted) {
@@ -63,14 +63,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initializeAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (mounted) {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchUserProfile(session.user.id);
-        } else {
-          setUserProfile(null);
-          setNeedsProfileCompletion(false);
-        }
+      if (session?.user) {
+        setUser(session.user);
+        await fetchUserProfile(session.user.id);
+      } else {
+        setUser(null);
+        setUserProfile(null);
+        setNeedsProfileCompletion(false);
       }
     });
 
@@ -82,33 +81,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUserProfile = async (userId: string) => {
     try {
-      const { data: profile, error } = await withTimeout(
-        supabase
-          .from('Users')
-          .select('*')
-          .eq('user_id', userId)
-          .single(),
-        SUPABASE_TIMEOUT,
-        'Fetching user profile'
-      );
+      const { data, error } = await supabase
+        .from('Users')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
 
       if (error) throw error;
-
-      if (profile) {
-        if (profile.username) {
-          setUserProfile(profile as UserProfile);
-          setNeedsProfileCompletion(false);
-        } else {
-          setNeedsProfileCompletion(true);
-        }
-      }
-    } catch (error: any) {
-      console.error('Error fetching user profile:', error);
-      if (error instanceof TimeoutError) {
-        toast.error('Profile loading timed out. Please refresh the page.');
+      setUserProfile(data);
+      if (data?.username) {
+        setNeedsProfileCompletion(false);
       } else {
-        toast.error('Failed to fetch user profile');
+        setNeedsProfileCompletion(true);
       }
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      // Don't show error toast here as it's not critical for the user experience
     }
   };
 
@@ -144,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (email: string, password: string) => {
+    setLoading(true);
     try {
       const { data, error } = await withTimeout(
         supabase.auth.signInWithPassword({
@@ -159,6 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data.user) {
         await fetchUserProfile(data.user.id);
         toast.success('Login successful!');
+        navigate('/');
         return {};
       }
 
@@ -170,6 +160,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : error.message || 'Login failed';
       toast.error(message);
       return { error: message };
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -278,6 +270,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     needsProfileCompletion,
     refreshUserProfile
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
+      </div>
+    );
+  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

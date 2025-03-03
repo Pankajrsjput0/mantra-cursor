@@ -3,37 +3,66 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = 'https://hhrwzfyutuhvengndjyn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhocnd6Znl1dHVodmVuZ25kanluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzIwOTM3MjIsImV4cCI6MjA0NzY2OTcyMn0.JI2IwtLwrWWnRKrAuumNoFhCWPZgxiWNfMgvFlKuKe0';
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000;
+// Create a singleton instance
+let supabaseInstance: ReturnType<typeof createClient>;
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storage: window.localStorage,
-    storageKey: 'supabase.auth.token',
-    flowType: 'pkce',
-  },
-  global: {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  },
-});
+export const getSupabase = () => {
+  if (!supabaseInstance) {
+    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+        storageKey: 'supabase.auth.token',
+        flowType: 'pkce',
+      },
+      global: {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+      db: {
+        schema: 'public'
+      },
+      realtime: {
+        timeout: 60000  // Increased to 60 seconds
+      }
+    });
+  }
+  return supabaseInstance;
+};
 
-// Retry wrapper for Supabase queries
+export const supabase = getSupabase();
+
+// Increased timeouts and retries
+const MAX_RETRIES = 3;  // Reduced number of retries
+const RETRY_DELAY = 5000;  // Increased initial delay to 5 seconds
+const AUTH_TIMEOUT = 30000;  // Increased to 30 seconds
+
+// Enhanced retry wrapper with exponential backoff
 async function withRetry<T>(
   operation: () => Promise<T>,
   retries = MAX_RETRIES,
-  delay = RETRY_DELAY
+  delay = RETRY_DELAY,
+  operationName = 'Operation'
 ): Promise<T> {
   try {
-    return await operation();
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`${operationName} timed out`));
+      }, AUTH_TIMEOUT);
+    });
+
+    return await Promise.race([
+      operation(),
+      timeoutPromise
+    ]);
   } catch (error: any) {
-    if (retries > 0 && (error?.status === 404 || error?.status === 503)) {
+    if (retries > 0) {
+      console.log(`Retrying ${operationName}, attempts remaining: ${retries}`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      return withRetry(operation, retries - 1, delay * 2);
+      return withRetry(operation, retries - 1, delay * 1.5, operationName);
     }
     throw error;
   }
@@ -137,24 +166,38 @@ export async function uploadProfilePicture(file: File): Promise<string> {
   });
 }
 
-// Auth state check
+// Auth state check with retry
 export async function checkAuthState() {
-  try {
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    return session;
-  } catch (error) {
-    console.error('Error checking auth state:', error);
-    return null;
-  }
+  return withRetry(
+    async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        return session;
+      } catch (error) {
+        console.error('Error checking auth state:', error);
+        return null;
+      }
+    },
+    MAX_RETRIES,
+    RETRY_DELAY,
+    'Auth state check'
+  );
 }
 
-// Clear auth state
+// Clear auth state with retry
 export async function clearAuthState() {
-  try {
-    await supabase.auth.signOut();
-    localStorage.removeItem('supabase.auth.token');
-  } catch (error) {
-    console.error('Error clearing auth state:', error);
-  }
+  return withRetry(
+    async () => {
+      try {
+        await supabase.auth.signOut();
+        localStorage.removeItem('supabase.auth.token');
+      } catch (error) {
+        console.error('Error clearing auth state:', error);
+      }
+    },
+    MAX_RETRIES,
+    RETRY_DELAY,
+    'Clear auth state'
+  );
 }
