@@ -32,11 +32,7 @@ const App: React.FC = () => {
             <Route path="/" element={<Home />} />
             <Route path="/novel/:id" element={<NovelDetail />} />
             <Route path="/novel/:novelId/chapter/:chapterId" element={<Chapter />} />
-            <Route path="/write" element={
-              <ProtectedRoute>
-                <Write />
-              </ProtectedRoute>
-            } />
+            <Route path="/novels/:novelId/write" element={<Write />} />
             <Route path="/library" element={
               <ProtectedRoute>
                 <Library />
@@ -50,6 +46,7 @@ const App: React.FC = () => {
             <Route path="/explore" element={<Explore />} />
             <Route path="/ranking" element={<Ranking />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/write" element={<Write />} />
           </Routes>
         </div>
       </AuthProvider>

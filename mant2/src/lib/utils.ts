@@ -1,6 +1,6 @@
 import { toast } from 'react-hot-toast';
 
-export const SUPABASE_TIMEOUT = 15000; // 15 seconds
+export const SUPABASE_TIMEOUT = 30000; // 15 seconds
 
 export class TimeoutError extends Error {
   constructor(message = 'Request timed out') {
